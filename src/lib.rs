@@ -1,8 +1,16 @@
+#![no_std]
+
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use quote::quote;
+use ser_bytes_aux::SerAux;
 use syn::{parse_macro_input, Data, DeriveInput, Fields, Type};
+
+// todo: Support BE.
+
+// todo temp
+// use defmt::println;
 
 #[proc_macro_derive(SerBytes)]
 pub fn serializable_struct(input: TokenStream) -> TokenStream {
@@ -38,6 +46,8 @@ pub fn serializable_struct(input: TokenStream) -> TokenStream {
         Data::Struct(data) => {
             let field_serializations = data.fields.iter().map(|f| {
                 let name = &f.ident;
+                let ty = &f.ty;
+
                 match &f.ty {
                     // todo: DRY
                     Type::Path(type_path) if type_path.path.is_ident("u8") => quote! {
@@ -123,11 +133,44 @@ pub fn serializable_struct(input: TokenStream) -> TokenStream {
                         }
                     },
 
-                    // Assuming all enums can be safely cast to u8
+                    // If not one of the primitive types, the field type must impl `SerAux`, which defines how
+                    // to handle it.
                     _ => quote! {
-                        buffer[offset] = self.#name as u8;
-                        offset += 1;
-                    },
+                        match <#ty as SerAux>::SER_TYPE {
+                            SerType::Enum(enum_size) => {
+                                 // Handle u8, etc-repr enums.
+                                match enum_size {
+                                    8 => {
+                                        buffer[offset] = self.#name as u8;
+                                        // buffer[offset] = unsafe { core::mem::transmute::<u8, u8> };
+                                        offset += 1;
+                                    }
+                                    16 => {
+                                        // let bytes = (self.#name as u16).to_le_bytes();
+                                        // buffer[offset..offset + 2].copy_from_slice(&bytes);
+                                        // offset += 2;
+                                    }
+                                    32 => {
+
+                                    }
+                                    64 => {
+
+                                    }
+                                    128 => {
+
+                                    }
+                                    _ => panic!("Invalid size for enum to serialize. Must be 8, 16, etc.")
+                                }
+                            }
+                            SerType::Recursive => {
+                                // Eg, a sub-struct.
+                                let substruct_ser = self.#name.serialize();
+                                let len = substruct_ser.len();
+                                buffer[offset..offset + len].copy_from_slice(&substruct_ser);
+                                offset += len;
+                            }
+                        }
+                    }
                 }
             });
             quote! {
@@ -137,7 +180,7 @@ pub fn serializable_struct(input: TokenStream) -> TokenStream {
                 // core::result::Result::Ok((buffer, offset)) // Return the buffer and the used size
                 buffer
             }
-        },
+        }
         // _ => quote! { core::result::Result::Err("Only structs can be serialized") },
         _ => quote! { panic!("Only structs can be serialized") },
     };
@@ -147,18 +190,14 @@ pub fn serializable_struct(input: TokenStream) -> TokenStream {
             // pub fn serialize(&self) -> core::result::Result<([u8; #total_size], usize), &'static str> {
             pub fn serialize(&self) -> [u8; #total_size] {
                 #serialize_code
-
-                // let mut buffer = [0u8; #total_size];
-                // let mut offset = 0usize;
-                // // Serialization logic...
-                // core::result::Result::Ok((buffer, offset))
             }
 
             // Placeholder for deserialization function
             // Actual implementation would need to parse the byte slice
             // pub fn deserialize(_bytes: &[u8]) -> core::result::Result<Self, &'static str> {
-            pub fn deserialize(_bytes: &[u8]) -> core::result::Result<Self, &'static str> {
+            pub fn deserialize(bytes: &[u8]) -> core::result::Result<Self, &'static str> {
                 unimplemented!("Deserialization logic goes here")
+                // #deserialize_code
             }
         }
     };

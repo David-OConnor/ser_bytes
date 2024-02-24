@@ -13,3 +13,7 @@ proc-macro = true
 syn = { version = "^2.0.50", features = ["full"] }
 quote = "^1.0.35"
 proc-macro2 = "^1.0"
+
+ser_bytes_aux = { path = "../ser_bytes_aux" }
+
+#defmt = "^0.3.5" # todo temp
